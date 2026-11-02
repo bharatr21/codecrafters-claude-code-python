@@ -52,15 +52,16 @@ def main():
     print("Logs from your program will appear here!", file=sys.stderr)
 
     tool_map = {"Read": read_file}
-
-    for call in chat.choices[0].message.tool_calls:
-        function = call.function
-        args = json.loads(function.arguments)
-        tool_name = function.name
-        result = tool_map[tool_name](**args)
-        print(result)
     
-    if not chat.choices[0].message.tool_calls:
+    if chat.choices[0].message.tool_calls:
+        for call in chat.choices[0].message.tool_calls:
+            function = call.function
+            args = json.loads(function.arguments)
+            tool_name = function.name
+            result = tool_map[tool_name](**args)
+            print(result)
+    
+    else:
         print(chat.choices[0].message.content)
 
 
