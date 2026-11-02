@@ -1,12 +1,16 @@
 import argparse
 import os
 import sys
+import json
 
 from openai import OpenAI
 
 API_KEY = os.getenv("OPENROUTER_API_KEY")
 BASE_URL = os.getenv("OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v1")
 
+def read_file(file_path: str) -> str:
+    with open(file_path, encoding="utf-8") as f:
+        return f.read()
 
 def main():
     p = argparse.ArgumentParser()
@@ -27,14 +31,14 @@ def main():
                     "name": "Read",
                     "description": "Read and return the contents of a file",
                     "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                        "type": "string",
-                        "description": "The path to the file to read"
-                        }
-                    },
-                    "required": ["file_path"]
+                        "type": "object",
+                        "properties": {
+                            "file_path": {
+                            "type": "string",
+                            "description": "The path to the file to read"
+                            }
+                        },
+                        "required": ["file_path"]
                     }
                 }
             },
@@ -47,7 +51,17 @@ def main():
     # You can use print statements as follows for debugging, they'll be visible when running tests.
     print("Logs from your program will appear here!", file=sys.stderr)
 
-    print(chat.choices[0].message.content)
+    tool_map = {"Read": read_file}
+
+    for call in chat.choices[0].message.tool_calls:
+        function = call["function"]
+        args = json.load(function["args"])
+        tool_name = function["name"]
+        result = tool_map[tool_name](**args)
+        print(result)
+    
+    if not chat.choices[0].message.tool_calls:
+        print(chat.choices[0].message.content)
 
 
 if __name__ == "__main__":
