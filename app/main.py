@@ -55,8 +55,8 @@ def main():
 
     for call in chat.choices[0].message.tool_calls:
         function = call.function
-        args = json.load(function["args"])
-        tool_name = function["name"]
+        args = json.load(function.args)
+        tool_name = function.name
         result = tool_map[tool_name](**args)
         print(result)
     
