@@ -56,7 +56,8 @@ def main():
 
         # You can use print statements as follows for debugging, they'll be visible when running tests.
         # print("Logs from your program will appear here!", file=sys.stderr)
-        print("Messages array", file=sys.stderr)
+        print(f"Messages array: {messages}", file=sys.stderr)
+        print(f"Tool calls: {chat.choices[0].message.tool_calls}", file=sys.stderr)
         
         if chat.choices[0].message.tool_calls:
             for call in chat.choices[0].message.tool_calls:
