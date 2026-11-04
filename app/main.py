@@ -22,47 +22,55 @@ def main():
 
     client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
-    chat = client.chat.completions.create(
-        model="anthropic/claude-haiku-4.5",
-        messages=[{"role": "user", "content": args.p}],
-        tools=[{
-                "type": "function",
-                "function": {
-                    "name": "Read",
-                    "description": "Read and return the contents of a file",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "file_path": {
-                            "type": "string",
-                            "description": "The path to the file to read"
-                            }
-                        },
-                        "required": ["file_path"]
+    messages = [{"role": "user", "content": args.p}]
+
+    while True:
+        chat = client.chat.completions.create(
+            model="anthropic/claude-haiku-4.5",
+            messages=messages,
+            tools=[{
+                    "type": "function",
+                    "function": {
+                        "name": "Read",
+                        "description": "Read and return the contents of a file",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "file_path": {
+                                "type": "string",
+                                "description": "The path to the file to read"
+                                }
+                            },
+                            "required": ["file_path"]
+                        }
                     }
-                }
-            },
-        ],
-    )
+                },
+            ],
+        )
 
-    if not chat.choices or len(chat.choices) == 0:
-        raise RuntimeError("no choices in response")
+        if not chat.choices or len(chat.choices) == 0:
+            raise RuntimeError("no choices in response")
 
-    # You can use print statements as follows for debugging, they'll be visible when running tests.
-    print("Logs from your program will appear here!", file=sys.stderr)
+        # You can use print statements as follows for debugging, they'll be visible when running tests.
+        print("Logs from your program will appear here!", file=sys.stderr)
 
-    tool_map = {"Read": read_file}
-    
-    if chat.choices[0].message.tool_calls:
-        for call in chat.choices[0].message.tool_calls:
-            function = call.function
-            args = json.loads(function.arguments)
-            tool_name = function.name
-            result = tool_map[tool_name](**args)
-            print(result)
-    
-    else:
-        print(chat.choices[0].message.content)
+        tool_map = {"Read": read_file}
+        
+        if chat.choices[0].message.tool_calls:
+            for call in chat.choices[0].message.tool_calls:
+                function = call.function
+                args = json.loads(function.arguments)
+                tool_name = function.name
+                result = tool_map[tool_name](**args)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": result
+                })
+
+        else:
+            print(chat.choices[0].message.content)
+            break
 
 
 if __name__ == "__main__":
