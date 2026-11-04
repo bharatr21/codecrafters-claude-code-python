@@ -71,11 +71,9 @@ def main():
                     "tool_call_id": call.id,
                     "content": result
                 })
-            print("Agent loop continues!", file=sys.stderr)
 
         else:
             print(rmsg.content)
-            print("Agent loop terminated!", file=sys.stderr)
             break
 
 
