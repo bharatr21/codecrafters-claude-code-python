@@ -56,15 +56,16 @@ def main():
 
         # You can use print statements as follows for debugging, they'll be visible when running tests.
         # print("Logs from your program will appear here!", file=sys.stderr)
-        print(f"Messages array: {messages}", file=sys.stderr)
-        print(f"Tool calls: {chat.choices[0].message.tool_calls}", file=sys.stderr)
+
+        rmsg = chat.choices[0].message
         
-        if chat.choices[0].message.tool_calls:
-            for call in chat.choices[0].message.tool_calls:
+        if rmsg.tool_calls:
+            messages.append(rmsg)
+            for call in rmsg.tool_calls:
                 function = call.function
-                args = json.loads(function.arguments)
+                tool_args = json.loads(function.arguments or "{}")
                 tool_name = function.name
-                result = tool_map[tool_name](**args)
+                result = tool_map[tool_name](**tool_args)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call.id,
@@ -73,7 +74,7 @@ def main():
             print("Agent loop continues!", file=sys.stderr)
 
         else:
-            print(chat.choices[0].message.content)
+            print(rmsg.content)
             print("Agent loop terminated!", file=sys.stderr)
             break
 
