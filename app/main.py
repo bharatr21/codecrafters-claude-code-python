@@ -1,8 +1,10 @@
 import subprocess
 import argparse
 import os
+from pathlib import Path
 import sys
 import json
+import yaml
 
 from openai import OpenAI
 
@@ -37,6 +39,35 @@ def run_bash(command: str):
     output += f"\n[exit code: {proc.returncode}]"
     return output
 
+
+def parse_frontmatter(text: str) -> dict:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    for i, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            fm = yaml.safe_load("\n".join(lines[1:i]))
+            return fm if isinstance(fm, dict) else {}
+    return {}
+
+
+def load_skill(path: Path) -> tuple[str, str] | None:
+    try:
+        fm = parse_frontmatter(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"Skipping {path}: {e}", file=sys.stderr)
+        return None
+    name, description = fm.get("name"), fm.get("description")
+    if not isinstance(name, str) or not isinstance(description, str):
+        print(f"Skipping {path}: missing name or description", file=sys.stderr)
+        return None
+    name, description = name.strip(), description.strip()
+    if not name or not description:
+        print(f"Skipping {path}: empty name or description", file=sys.stderr)
+        return None
+    return name, description
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("-p", required=True)
@@ -46,8 +77,24 @@ def main():
         raise RuntimeError("OPENROUTER_API_KEY is not set")
 
     client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
+    skills_dir = Path(".claude/skills")
 
-    messages = [{"role": "user", "content": args.p}]
+    skill_files = sorted(skills_dir.rglob("SKILL.md"))
+    loaded_skills = ""
+    for f in skill_files:
+        fm = load_skill(f)
+        if fm is None:
+            print(f"Could not load the skill at {f}", file=sys.stderr)
+        else:
+            name, description = fm
+            loaded_skills += f"- {name}: {description}\n"
+
+    system_message =  f"You have access to the following skills:\n\n{loaded_skills}"
+
+    messages = [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": args.p}
+        ]
     tool_map = {"Read": read_file, "Write": write_file, "Bash": run_bash}
     tools= [
         {
