@@ -16,7 +16,7 @@ def read_file(file_path: str) -> str:
 def write_file(file_path: str, content: str):
     os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
     with open(file_path, encoding="utf-8", mode="w") as f:
-        return f.write(content)
+        f.write(content)
 
 
 def main():
@@ -55,18 +55,18 @@ def main():
                 "name": "Write",
                 "description": "Write content to a file",
                 "parameters": {
-                "type": "object",
-                "required": ["file_path", "content"],
-                    "properties": {
-                        "file_path": {
-                        "type": "string",
-                        "description": "The path of the file to write to"
-                        },
-                        "content": {
-                        "type": "string",
-                        "description": "The content to write to the file"
+                    "type": "object",
+                    "required": ["file_path", "content"],
+                        "properties": {
+                            "file_path": {
+                            "type": "string",
+                            "description": "The path of the file to write to"
+                            },
+                            "content": {
+                            "type": "string",
+                            "description": "The content to write to the file"
+                            }
                         }
-                    }
                 }
             }
         },
