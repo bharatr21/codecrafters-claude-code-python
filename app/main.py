@@ -23,29 +23,32 @@ def main():
     client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
     messages = [{"role": "user", "content": args.p}]
+    tool_map = {"Read": read_file}
+    tools= [
+        {
+            "type": "function",
+            "function": {
+                "name": "Read",
+                "description": "Read and return the contents of a file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                        "type": "string",
+                        "description": "The path to the file to read"
+                        }
+                    },
+                    "required": ["file_path"]
+                }
+            }
+        },
+    ]
 
     while True:
         chat = client.chat.completions.create(
             model="anthropic/claude-haiku-4.5",
             messages=messages,
-            tools=[{
-                    "type": "function",
-                    "function": {
-                        "name": "Read",
-                        "description": "Read and return the contents of a file",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": {
-                                "type": "string",
-                                "description": "The path to the file to read"
-                                }
-                            },
-                            "required": ["file_path"]
-                        }
-                    }
-                },
-            ],
+            tools=tools,
         )
 
         if not chat.choices or len(chat.choices) == 0:
@@ -53,8 +56,7 @@ def main():
 
         # You can use print statements as follows for debugging, they'll be visible when running tests.
         # print("Logs from your program will appear here!", file=sys.stderr)
-
-        tool_map = {"Read": read_file}
+        print("Messages array", file=sys.stderr)
         
         if chat.choices[0].message.tool_calls:
             for call in chat.choices[0].message.tool_calls:
@@ -67,9 +69,11 @@ def main():
                     "tool_call_id": call.id,
                     "content": result
                 })
+            print("Agent loop continues!", file=sys.stderr)
 
         else:
             print(chat.choices[0].message.content)
+            print("Agent loop terminated!", file=sys.stderr)
             break
 
 
