@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import sys
 import json
-import yaml
 
 from openai import OpenAI
 
@@ -44,10 +43,13 @@ def parse_frontmatter(text: str) -> dict:
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         return {}
-    for i, line in enumerate(lines[1:], start=1):
+    fm = {}
+    for line in lines[1:]:
         if line.strip() == "---":
-            fm = yaml.safe_load("\n".join(lines[1:i]))
-            return fm if isinstance(fm, dict) else {}
+            return fm
+        key, sep, value = line.partition(":")
+        if sep and not line.startswith((" ", "\t")):
+            fm[key.strip()] = value.strip().strip("\"'")
     return {}
 
 
