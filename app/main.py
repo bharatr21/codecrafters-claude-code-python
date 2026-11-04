@@ -1,3 +1,4 @@
+import subprocess
 import argparse
 import os
 import sys
@@ -18,6 +19,23 @@ def write_file(file_path: str, content: str):
     with open(file_path, encoding="utf-8", mode="w") as f:
         return str(f.write(content))
 
+def run_bash(command: str):
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,           # interpret the string with /bin/sh
+            capture_output=True,  # collect stdout/stderr instead of printing them
+            text=True,            # decode to str instead of bytes
+            timeout=120,          # don't let a hung command stall the agent
+        )
+    except subprocess.TimeoutExpired:
+        return f"Error: command timed out after 120s"
+
+    output = proc.stdout
+    if proc.stderr:
+        output += f"\n[stderr]\n{proc.stderr}"
+    output += f"\n[exit code: {proc.returncode}]"
+    return output
 
 def main():
     p = argparse.ArgumentParser()
@@ -30,7 +48,7 @@ def main():
     client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
     messages = [{"role": "user", "content": args.p}]
-    tool_map = {"Read": read_file, "Write": write_file}
+    tool_map = {"Read": read_file, "Write": write_file, "Bash": run_bash}
     tools= [
         {
             "type": "function",
@@ -67,6 +85,23 @@ def main():
                             "description": "The content to write to the file"
                             }
                         }
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "Bash",
+                "description": "Execute a shell command",
+                "parameters": {
+                "type": "object",
+                "required": ["command"],
+                "properties": {
+                    "command": {
+                    "type": "string",
+                    "description": "The command to execute"
+                    }
+                }
                 }
             }
         },
