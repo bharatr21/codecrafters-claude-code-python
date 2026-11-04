@@ -12,6 +12,13 @@ def read_file(file_path: str) -> str:
     with open(file_path, encoding="utf-8") as f:
         return f.read()
 
+
+def write_file(file_path: str, content: str):
+    os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
+    with open(file_path, encoding="utf-8", mode="w") as f:
+        return f.write(content)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("-p", required=True)
@@ -23,7 +30,7 @@ def main():
     client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
     messages = [{"role": "user", "content": args.p}]
-    tool_map = {"Read": read_file}
+    tool_map = {"Read": read_file, "Write": write_file}
     tools= [
         {
             "type": "function",
@@ -32,13 +39,34 @@ def main():
                 "description": "Read and return the contents of a file",
                 "parameters": {
                     "type": "object",
+                    "required": ["file_path"],
                     "properties": {
                         "file_path": {
                         "type": "string",
                         "description": "The path to the file to read"
                         }
                     },
-                    "required": ["file_path"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "Write",
+                "description": "Write content to a file",
+                "parameters": {
+                "type": "object",
+                "required": ["file_path", "content"],
+                    "properties": {
+                        "file_path": {
+                        "type": "string",
+                        "description": "The path of the file to write to"
+                        },
+                        "content": {
+                        "type": "string",
+                        "description": "The content to write to the file"
+                        }
+                    }
                 }
             }
         },
@@ -65,7 +93,10 @@ def main():
                 function = call.function
                 tool_args = json.loads(function.arguments or "{}")
                 tool_name = function.name
-                result = tool_map[tool_name](**tool_args)
+                try:
+                    result = tool_map[tool_name](**tool_args)
+                except Exception as e:
+                    result=f"Error: {e}"
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call.id,
