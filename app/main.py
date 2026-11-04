@@ -95,7 +95,7 @@ def main():
                 tool_name = function.name
                 try:
                     result = tool_map[tool_name](**tool_args)
-                    print(f"Result": {result}, file=sys.stderr)
+                    print(f"Result: {result}", file=sys.stderr)
                 except Exception as e:
                     result=f"Error: {e}"
                 messages.append({
