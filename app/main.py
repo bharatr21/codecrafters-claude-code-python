@@ -135,6 +135,17 @@ def with_skill_dir(path: Path, text: str) -> str:
     text = f"Skill: {path.parent.name} (Base directory for this skill is located at {path.parent})\nPaths in the instructions below are relative to that folder.\n{text}"
     return text
 
+def render_skill(path: Path, raw_args: str = "") -> str:
+    """A skill's full text as the model sees it: arguments expanded, under its directory header."""
+    body = skill_body(path)
+    skill_args = raw_args.split()
+    content = expand_arguments(body, raw_args, skill_args)
+    if not uses_arguments(body, raw_args, skill_args) and raw_args:
+        content += f"\n\nARGUMENTS: {raw_args}"
+    # header goes on after expansion so the path itself is never scanned for $N
+    return with_skill_dir(path, content)
+
+
 def expand_prompt(prompt: str, skills: dict[str, Path]) -> list[dict]:
     """Turn a prompt into user messages, expanding any leading run of /skill tokens."""
     prompt = prompt.strip()
@@ -157,17 +168,7 @@ def expand_prompt(prompt: str, skills: dict[str, Path]) -> list[dict]:
             raise NotImplementedError("'/' on its own is not a command")
         resolve_skill(first[1:], skills)  # raises UnknownSkillError
     
-    skill_args = raw_args.split()
-    messages: list[dict] = []
-    for name in names:
-        path = skills[name]
-        body = skill_body(path)
-        content = expand_arguments(body, raw_args, skill_args)
-        if not uses_arguments(body, raw_args, skill_args) and raw_args:
-            content += f"\n\nARGUMENTS: {raw_args}"
-        # header goes on after expansion so the path itself is never scanned for $N
-        messages.append({"role": "user", "content": with_skill_dir(path, content)})
-    return messages
+    return [{"role": "user", "content": render_skill(skills[name], raw_args)} for name in names]
 
 
 def main():
@@ -202,9 +203,8 @@ def main():
     messages = [{"role": "system", "content": system_message}]
     messages += expand_prompt(args.p, skills)
 
-    def run_skill(name: str) -> str:
-        path = resolve_skill(name, skills)
-        return with_skill_dir(path, skill_body(path))
+    def run_skill(name: str, arguments: str = "") -> str:
+        return render_skill(resolve_skill(name, skills), arguments)
 
     tool_map = {"Read": read_file, "Write": write_file, "Bash": run_bash, "Skill": run_skill}
     tools= [
@@ -275,6 +275,10 @@ def main():
                         "name": {
                             "type": "string",
                             "description": "The name of the skill to load"
+                        },
+                        "arguments": {
+                            "type": "string",
+                            "description": "Optional arguments for the skill, as the user would type them after /name"
                         }
                     }
                 }
