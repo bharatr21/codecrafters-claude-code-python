@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import sys
 import json
+import re
 
 from openai import OpenAI
 
@@ -87,6 +88,28 @@ def resolve_skill(name: str, skills: dict[str, Path]) -> Path:
     return skills[name]
 
 
+# \$ is a literal $, $ARGUMENTS is the whole argument string,
+# $ARGUMENTS[N] and $N are single arguments (zero-based, \d+ so $10 is argument 10)
+ARGUMENTS_PATTERN = re.compile(r"\\\$|\$ARGUMENTS(?:\[(?P<index>\d+)\])?|\$(?P<short>\d+)")
+
+
+def expand_arguments(body: str, raw_args: str, skill_args: list[str]) -> str:
+    def replace(match: re.Match) -> str:
+        if match.group(0) == "\\$":
+            return "$"
+        index = match.group("index") or match.group("short")
+        if index is None:
+            return raw_args
+        i = int(index)
+        return skill_args[i] if i < len(skill_args) else ""
+
+    return ARGUMENTS_PATTERN.sub(replace, body)
+
+
+def uses_arguments(body: str) -> bool:
+    return any(m.group(0) != "\\$" for m in ARGUMENTS_PATTERN.finditer(body))
+
+
 def skill_body(path: Path) -> str:
     lines = path.read_text(encoding="utf-8").splitlines()
     if lines and lines[0].strip() == "---":
@@ -130,11 +153,14 @@ def main():
     if prompt.startswith("/"):
         parts = prompt.split(maxsplit=1)
         command = parts[0][1:]
+        raw_args = parts[1] if len(parts) > 1 else ""
+        skill_args: list[str] = raw_args.split()
         if not command:
             raise NotImplementedError("'/' on its own is not a command")
-        messages.append({"role": "user", "content": skill_body(resolve_skill(command, skills))})
-        if len(parts) > 1:
-            messages.append({"role": "user", "content": parts[1]})
+        body = skill_body(resolve_skill(command, skills))
+        messages.append({"role": "user", "content": expand_arguments(body, raw_args, skill_args)})
+        if raw_args and not uses_arguments(body):
+            messages.append({"role": "user", "content": raw_args})
     else:
         messages.append({"role": "user", "content": prompt})
 
