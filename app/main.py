@@ -2,6 +2,7 @@ import subprocess
 import argparse
 import os
 from pathlib import Path
+from typing import Callable
 import sys
 import json
 import re
@@ -135,6 +136,11 @@ def with_skill_dir(path: Path, text: str) -> str:
     text = f"Skill: {path.parent.name} (Base directory for this skill is located at {path.parent})\nPaths in the instructions below are relative to that folder.\n{text}"
     return text
 
+def skill_context(path: Path) -> str:
+    """The skill's `context` frontmatter value ("fork" runs it in a subagent), read at invocation time."""
+    return parse_frontmatter(path.read_text(encoding="utf-8")).get("context", "").strip()
+
+
 def render_skill(path: Path, raw_args: str = "") -> str:
     """A skill's full text as the model sees it: arguments expanded, under its directory header."""
     body = skill_body(path)
@@ -146,7 +152,11 @@ def render_skill(path: Path, raw_args: str = "") -> str:
     return with_skill_dir(path, content)
 
 
-def expand_prompt(prompt: str, skills: dict[str, Path]) -> list[dict]:
+def expand_prompt(
+    prompt: str,
+    skills: dict[str, Path],
+    render: Callable[[Path, str], str] = render_skill,
+) -> list[dict]:
     """Turn a prompt into user messages, expanding any leading run of /skill tokens."""
     prompt = prompt.strip()
     if not prompt.startswith("/"):
@@ -168,7 +178,44 @@ def expand_prompt(prompt: str, skills: dict[str, Path]) -> list[dict]:
             raise NotImplementedError("'/' on its own is not a command")
         resolve_skill(first[1:], skills)  # raises UnknownSkillError
     
-    return [{"role": "user", "content": render_skill(skills[name], raw_args)} for name in names]
+    return [{"role": "user", "content": render(skills[name], raw_args)} for name in names]
+
+
+def run_agent(client: OpenAI, messages: list, tools: list[dict], tool_map: dict) -> str:
+    """Run the tool-calling loop on `messages` until the model answers, and return that answer."""
+    while True:
+        chat = client.chat.completions.create(
+            model="anthropic/claude-haiku-5.5",
+            messages=messages,
+            tools=tools,
+        )
+
+        if not chat.choices or len(chat.choices) == 0:
+            raise RuntimeError("no choices in response")
+
+        # You can use print statements as follows for debugging, they'll be visible when running tests.
+        # print("Logs from your program will appear here!", file=sys.stderr)
+
+        rmsg = chat.choices[0].message
+        
+        if rmsg.tool_calls:
+            messages.append(rmsg)
+            for call in rmsg.tool_calls:
+                function = call.function
+                tool_args = json.loads(function.arguments or "{}")
+                tool_name = function.name
+                try:
+                    result = tool_map[tool_name](**tool_args)
+                except Exception as e:
+                    result=f"Error: {e}"
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": result
+                })
+
+        else:
+            return rmsg.content or ""
 
 
 def main():
@@ -200,14 +247,8 @@ def main():
         "When a skill is relevant, call the Skill tool with its name to load its full instructions."
     )
 
-    messages = [{"role": "system", "content": system_message}]
-    messages += expand_prompt(args.p, skills)
-
-    def run_skill(name: str, arguments: str = "") -> str:
-        return render_skill(resolve_skill(name, skills), arguments)
-
-    tool_map = {"Read": read_file, "Write": write_file, "Bash": run_bash, "Skill": run_skill}
-    tools= [
+    tool_map = {"Read": read_file, "Write": write_file, "Bash": run_bash}
+    tools: list[dict] = [
         {
             "type": "function",
             "function": {
@@ -286,41 +327,34 @@ def main():
         },
     ]
 
-    while True:
-        chat = client.chat.completions.create(
-            model="anthropic/claude-haiku-4.5",
-            messages=messages,
-            tools=tools,
-        )
+    def invoke_skill(path: Path, raw_args: str = "") -> str:
+        """Render a skill, or run it in a subagent and return the subagent's answer if it forks."""
+        content = render_skill(path, raw_args)
+        if skill_context(path) != "fork":
+            return content
+        sub_tools = [t for t in tools if "function" in t and t["function"]["name"] != "Skill"]
+        sub_tool_map = {t: f for t, f in tool_map.items() if t != "Skill"}
+        sub_messages = [
+            {
+                "role": "system",
+                "content": "You are a subagent for Claude Code, Anthropic's official CLI for Claude. Given the user's message, use the tools available to complete the task. Do what has been asked; nothing more, nothing less. When you complete the task, respond with a detailed writeup, since this is the only output that the caller will see.\n\nNotes: in your final response, share relevant file names and code snippets. Any file paths you return must be absolute."
+            },
+            {
+                "role": "user",
+                "content": content
+            }
+        ]
+        sub_content = run_agent(client, sub_messages, sub_tools, sub_tool_map)
+        return sub_content
 
-        if not chat.choices or len(chat.choices) == 0:
-            raise RuntimeError("no choices in response")
+    def run_skill(name: str, arguments: str = "") -> str:
+        return invoke_skill(resolve_skill(name, skills), arguments)
 
-        # You can use print statements as follows for debugging, they'll be visible when running tests.
-        # print("Logs from your program will appear here!", file=sys.stderr)
+    tool_map["Skill"] = run_skill
+    messages = [{"role": "system", "content": system_message}]
+    messages += expand_prompt(args.p, skills, invoke_skill)
 
-        rmsg = chat.choices[0].message
-        
-        if rmsg.tool_calls:
-            messages.append(rmsg)
-            for call in rmsg.tool_calls:
-                function = call.function
-                tool_args = json.loads(function.arguments or "{}")
-                tool_name = function.name
-                try:
-                    result = tool_map[tool_name](**tool_args)
-                except Exception as e:
-                    result=f"Error: {e}"
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": result
-                })
-
-        else:
-            print(rmsg.content)
-            break
-
+    print(run_agent(client, messages, tools, tool_map))
 
 if __name__ == "__main__":
     main()
