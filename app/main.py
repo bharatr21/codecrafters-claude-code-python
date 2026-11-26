@@ -93,21 +93,32 @@ def resolve_skill(name: str, skills: dict[str, Path]) -> Path:
 ARGUMENTS_PATTERN = re.compile(r"\\\$|\$ARGUMENTS(?:\[(?P<index>\d+)\])?|\$(?P<short>\d+)")
 
 
+def placeholder_value(match: re.Match, raw_args: str, skill_args: list[str]) -> str | None:
+    """The value a placeholder stands for, or None if it has none and stays literal."""
+    index = match.group("index") or match.group("short")
+    if index is None:
+        return raw_args
+    if not skill_args:
+        return ""  # with zero arguments every placeholder is empty
+    i = int(index)
+    return skill_args[i] if i < len(skill_args) else None
+
+
 def expand_arguments(body: str, raw_args: str, skill_args: list[str]) -> str:
     def replace(match: re.Match) -> str:
         if match.group(0) == "\\$":
             return "$"
-        index = match.group("index") or match.group("short")
-        if index is None:
-            return raw_args
-        i = int(index)
-        return skill_args[i] if i < len(skill_args) else ""
+        value = placeholder_value(match, raw_args, skill_args)
+        return match.group(0) if value is None else value
 
     return ARGUMENTS_PATTERN.sub(replace, body)
 
 
-def uses_arguments(body: str) -> bool:
-    return any(m.group(0) != "\\$" for m in ARGUMENTS_PATTERN.finditer(body))
+def uses_arguments(body: str, raw_args: str, skill_args: list[str]) -> bool:
+    return any(
+        m.group(0) != "\\$" and placeholder_value(m, raw_args, skill_args) is not None
+        for m in ARGUMENTS_PATTERN.finditer(body)
+    )
 
 
 def skill_body(path: Path) -> str:
@@ -117,6 +128,43 @@ def skill_body(path: Path) -> str:
             if line.strip() == "---":
                 return "\n".join(lines[i + 1:]).strip()
     return "\n".join(lines).strip()
+
+
+def expand_prompt(prompt: str, skills: dict[str, Path]) -> list[dict]:
+    """Turn a prompt into user messages, expanding any leading run of /skill tokens."""
+    prompt = prompt.strip()
+    if not prompt.startswith("/"):
+        return [{"role": "user", "content": prompt}]
+
+    names: list[str] = []
+    raw_args = ""
+    for token in re.finditer(r"\S+", prompt):
+        name = token.group().removeprefix("/")
+        if not token.group().startswith("/") or name not in skills:
+            raw_args = prompt[token.start():]
+            break
+        if name not in names:  # a repeated skill continues the run but is expanded once
+            names.append(name)
+    bodies = [skill_body(skills[name]) for name in names]
+
+    if not bodies:
+        # The first token starts with / but names no skill
+        first = prompt.split()[0]
+        if first == "/":
+            raise NotImplementedError("'/' on its own is not a command")
+        resolve_skill(first[1:], skills)  # raises UnknownSkillError
+    
+    skill_args = raw_args.split()
+    messages: list[dict] = []
+    for body in bodies:
+        body_dict = {
+            "role": "user",
+            "content": expand_arguments(body, raw_args, skill_args)
+        }
+        if not uses_arguments(body, raw_args, skill_args) and raw_args:
+            body_dict["content"] += f"\n\nARGUMENTS: {raw_args}"
+        messages.append(body_dict)
+    return messages
 
 
 def main():
@@ -149,20 +197,7 @@ def main():
     )
 
     messages = [{"role": "system", "content": system_message}]
-    prompt = args.p.strip()
-    if prompt.startswith("/"):
-        parts = prompt.split(maxsplit=1)
-        command = parts[0][1:]
-        raw_args = parts[1] if len(parts) > 1 else ""
-        skill_args: list[str] = raw_args.split()
-        if not command:
-            raise NotImplementedError("'/' on its own is not a command")
-        body = skill_body(resolve_skill(command, skills))
-        messages.append({"role": "user", "content": expand_arguments(body, raw_args, skill_args)})
-        if raw_args and not uses_arguments(body):
-            messages.append({"role": "user", "content": raw_args})
-    else:
-        messages.append({"role": "user", "content": prompt})
+    messages += expand_prompt(args.p, skills)
 
     def run_skill(name: str) -> str:
         return skill_body(resolve_skill(name, skills))
