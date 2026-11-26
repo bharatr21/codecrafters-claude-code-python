@@ -53,21 +53,47 @@ def parse_frontmatter(text: str) -> dict:
     return {}
 
 
-def load_skill(path: Path) -> tuple[str, str] | None:
+class SkillError(Exception):
+    pass
+
+
+class UnknownSkillError(SkillError):
+    """The user asked for a skill that doesn't exist."""
+
+
+class InvalidSkillError(SkillError):
+    """The skill exists but its SKILL.md is broken."""
+
+
+def load_skill(path: Path) -> tuple[str, str]:
     try:
         fm = parse_frontmatter(path.read_text(encoding="utf-8"))
     except Exception as e:
-        print(f"Skipping {path}: {e}", file=sys.stderr)
-        return None
+        raise InvalidSkillError(f"{path}: {e}") from e
     name, description = fm.get("name"), fm.get("description")
     if not isinstance(name, str) or not isinstance(description, str):
-        print(f"Skipping {path}: missing name or description", file=sys.stderr)
-        return None
+        raise InvalidSkillError(f"{path}: missing name or description")
     name, description = name.strip(), description.strip()
     if not name or not description:
-        print(f"Skipping {path}: empty name or description", file=sys.stderr)
-        return None
+        raise InvalidSkillError(f"{path}: empty name or description")
+    if name != path.parent.name:
+        raise InvalidSkillError(f"{path}: name '{name}' does not match directory '{path.parent.name}'")
     return name, description
+
+
+def resolve_skill(name: str, skills: dict[str, Path]) -> Path:
+    if name not in skills:
+        raise UnknownSkillError(f"Unknown skill: /{name}")
+    return skills[name]
+
+
+def skill_body(path: Path) -> str:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if lines and lines[0].strip() == "---":
+        for i, line in enumerate(lines[1:], start=1):
+            if line.strip() == "---":
+                return "\n".join(lines[i + 1:]).strip()
+    return "\n".join(lines).strip()
 
 
 def main():
@@ -81,23 +107,41 @@ def main():
     client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
     skills_dir = Path(".claude/skills")
 
-    skill_files = sorted(skills_dir.rglob("SKILL.md"))
+    skill_files = sorted(skills_dir.glob("*/SKILL.md"))
+    skills: dict[str, Path] = {}
     loaded_skills = ""
     for f in skill_files:
-        fm = load_skill(f)
-        if fm is None:
+        try:
+            name, description = load_skill(f)
+        except InvalidSkillError as e:
+            print(f"Skipping {e}", file=sys.stderr)
             print(f"Could not load the skill at {f}", file=sys.stderr)
-        else:
-            name, description = fm
-            loaded_skills += f"- {name}: {description}\n"
+            continue
+        skills[name] = f
+        loaded_skills += f"- {name}: {description}\n"
 
-    system_message =  f"You have access to the following skills:\n\n{loaded_skills}"
+    system_message =  (
+        f"You have access to the following skills:\n\n{loaded_skills}\n"
+        "When a skill is relevant, call the Skill tool with its name to load its full instructions."
+    )
 
-    messages = [
-        {"role": "system", "content": system_message},
-        {"role": "user", "content": args.p}
-        ]
-    tool_map = {"Read": read_file, "Write": write_file, "Bash": run_bash}
+    messages = [{"role": "system", "content": system_message}]
+    prompt = args.p.strip()
+    if prompt.startswith("/"):
+        parts = prompt.split(maxsplit=1)
+        command = parts[0][1:]
+        if not command:
+            raise NotImplementedError("'/' on its own is not a command")
+        messages.append({"role": "user", "content": skill_body(resolve_skill(command, skills))})
+        if len(parts) > 1:
+            messages.append({"role": "user", "content": parts[1]})
+    else:
+        messages.append({"role": "user", "content": prompt})
+
+    def run_skill(name: str) -> str:
+        return skill_body(resolve_skill(name, skills))
+
+    tool_map = {"Read": read_file, "Write": write_file, "Bash": run_bash, "Skill": run_skill}
     tools= [
         {
             "type": "function",
@@ -151,6 +195,23 @@ def main():
                     "description": "The command to execute"
                     }
                 }
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "Skill",
+                "description": "Load the full instructions of one of the available skills",
+                "parameters": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "The name of the skill to load"
+                        }
+                    }
                 }
             }
         },
