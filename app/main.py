@@ -130,6 +130,11 @@ def skill_body(path: Path) -> str:
     return "\n".join(lines).strip()
 
 
+def with_skill_dir(path: Path, text: str) -> str:
+    """Prefix a skill's text with its base directory so relative paths in it resolve."""
+    text = f"Skill: {path.parent.name} (Base directory for this skill is located at {path.parent})\nPaths in the instructions below are relative to that folder.\n{text}"
+    return text
+
 def expand_prompt(prompt: str, skills: dict[str, Path]) -> list[dict]:
     """Turn a prompt into user messages, expanding any leading run of /skill tokens."""
     prompt = prompt.strip()
@@ -145,9 +150,7 @@ def expand_prompt(prompt: str, skills: dict[str, Path]) -> list[dict]:
             break
         if name not in names:  # a repeated skill continues the run but is expanded once
             names.append(name)
-    bodies = [skill_body(skills[name]) for name in names]
-
-    if not bodies:
+    if not names:
         # The first token starts with / but names no skill
         first = prompt.split()[0]
         if first == "/":
@@ -156,14 +159,14 @@ def expand_prompt(prompt: str, skills: dict[str, Path]) -> list[dict]:
     
     skill_args = raw_args.split()
     messages: list[dict] = []
-    for body in bodies:
-        body_dict = {
-            "role": "user",
-            "content": expand_arguments(body, raw_args, skill_args)
-        }
+    for name in names:
+        path = skills[name]
+        body = skill_body(path)
+        content = expand_arguments(body, raw_args, skill_args)
         if not uses_arguments(body, raw_args, skill_args) and raw_args:
-            body_dict["content"] += f"\n\nARGUMENTS: {raw_args}"
-        messages.append(body_dict)
+            content += f"\n\nARGUMENTS: {raw_args}"
+        # header goes on after expansion so the path itself is never scanned for $N
+        messages.append({"role": "user", "content": with_skill_dir(path, content)})
     return messages
 
 
@@ -188,7 +191,7 @@ def main():
             print(f"Skipping {e}", file=sys.stderr)
             print(f"Could not load the skill at {f}", file=sys.stderr)
             continue
-        skills[name] = f
+        skills[name] = f.resolve()  # absolute, so the header is right whatever Bash's cwd
         loaded_skills += f"- {name}: {description}\n"
 
     system_message =  (
@@ -200,7 +203,8 @@ def main():
     messages += expand_prompt(args.p, skills)
 
     def run_skill(name: str) -> str:
-        return skill_body(resolve_skill(name, skills))
+        path = resolve_skill(name, skills)
+        return with_skill_dir(path, skill_body(path))
 
     tool_map = {"Read": read_file, "Write": write_file, "Bash": run_bash, "Skill": run_skill}
     tools= [
